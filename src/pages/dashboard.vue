@@ -2,10 +2,6 @@
 import { computed, onMounted, ref, onUnmounted } from "vue";
 import { createClient } from "@supabase/supabase-js";
 
-// Assume TheHeader and TheFooter components exist (or remove if not used)
-// import TheHeader from './components/TheHeader.vue';
-// import TheFooter from './components/TheFooter.vue';
-
 
 const SUPABASE_URL = "https://tcvwcyovxfyfijkrahjl.supabase.co";
 const SUPABASE_KEY =
@@ -13,7 +9,6 @@ const SUPABASE_KEY =
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// --- Interfaces ---
 interface Option {
   id: number;
   name: string;
@@ -35,48 +30,32 @@ interface Election {
   option: Option[];
 }
 
-// --- Reactive State ---
 const elections = ref<Election[]>([]);
 const selectedElection = ref<Election | null>(null);
 const isLoading = ref(true);
 const errorMsg = ref<string | null>(null);
 
-// --- Voting State ---
-// Use a random ID for this browser session to track votes
 const userId = ref<string>("anon_" + Math.random().toString(36).substring(2, 9));
-// Key: Random UserID (string), Value: Map<ElectionID (number), VotedOptionID (number | null)>
-// This map will essentially only ever hold one key (the current userId)
 const userVotes = ref(new Map<string, Map<number, number | null>>());
 
-// --- Time State ---
 const currentTime = ref(new Date());
 let timerId: number | undefined = undefined;
 
 
-// --- Computed Properties ---
-// Determines if the *selected* election is currently votable
 const isElectionActiveForVoting = computed(() => {
-  // 1. Must have a selected election
   if (!selectedElection.value) {
     return false;
   }
-  // 2. The election's 'status' flag must be true (set by admin)
   if (!selectedElection.value.status) {
     console.log(`Election ${selectedElection.value.id} is inactive (status: false)`);
     return false;
   }
-  // 3. The current time must be within the start and end dates
   try {
     const startDate = new Date(selectedElection.value.start_data);
     const endDate = new Date(selectedElection.value.end_data);
     const now = currentTime.value; // Use the reactive currentTime
 
-    // Log times for debugging
-    // console.log(`Checking Election ${selectedElection.value.id}: Now (${now.toISOString()}) vs Start (${startDate.toISOString()}) vs End (${endDate.toISOString()})`);
-
-    // Check: now >= start AND now <= end
     const isActiveTime = now >= startDate && now <= endDate;
-    // if (!isActiveTime) console.log(`Election ${selectedElection.value.id} is outside active time window.`);
     return isActiveTime;
 
   } catch (e) {
@@ -85,12 +64,9 @@ const isElectionActiveForVoting = computed(() => {
   }
 });
 
-// --- Lifecycle Hooks ---
 onMounted(() => {
-  // Check time more frequently (e.g., every 30 seconds) for better accuracy
   timerId = setInterval(() => {
     currentTime.value = new Date();
-    // console.log("Current time updated:", currentTime.value.toISOString()); // Debug time update
   }, 30000) as unknown as number;
 
   loadVotesFromLocalStorage();
@@ -102,7 +78,6 @@ onUnmounted(() => {
   saveVotesToLocalStorage();
 });
 
-// --- Voting Persistence (LocalStorage - Session Specific using Random ID) ---
 function loadVotesFromLocalStorage() {
     const currentUserId = userId.value;
     if (!currentUserId) return;
@@ -124,7 +99,6 @@ function loadVotesFromLocalStorage() {
     } else {
          console.log('No votes found in LS for this session.');
     }
-    // Ensure the map for the current user exists in the main ref
     userVotes.value.set(currentUserId, sessionVoteMap);
 }
 
@@ -144,7 +118,6 @@ function saveVotesToLocalStorage() {
     }
 }
 
-// --- Supabase Data Operations ---
 async function fetchElections() {
   isLoading.value = true;
   errorMsg.value = null;
@@ -161,14 +134,12 @@ async function fetchElections() {
 
     elections.value = data.map(election => ({
         ...election,
-        // Ensure votes is a number, default to 0 if null/undefined/missing
         option: (election.option || []).map(opt => ({
             ...opt,
             votes: typeof opt.votes === 'number' ? opt.votes : 0
         }))
     })) as Election[];
 
-    // Refresh selected election data if it exists
     if (selectedElection.value) {
         const refreshed = elections.value.find(e => e.id === selectedElection.value?.id);
         selectedElection.value = refreshed || null;
@@ -183,13 +154,10 @@ async function fetchElections() {
   }
 }
 
-// --- Voting Logic ---
 async function voteForOption(option: Option, electionId: number) {
     const currentUserId = userId.value;
 
-    // Re-check election activity right before voting attempt
     if (!isElectionActiveForVoting.value) {
-        // Provide more specific feedback if possible
         const election = elections.value.find(e => e.id === electionId);
         if (election && !election.status) {
              alert("Bu saylov admin tomonidan nofaol qilingan.");
@@ -223,18 +191,14 @@ async function voteForOption(option: Option, electionId: number) {
     }
 
     const originalVoteCount = option.votes;
-    // Set loading specific to this option/button if needed, or use global isLoading
-    // For simplicity, using global isLoading
     isLoading.value = true;
     errorMsg.value = null;
 
     try {
-        // Optimistic UI update
         option.votes += 1;
         votesForCurrentSession.set(electionId, option.id); // Record vote in the session map
         saveVotesToLocalStorage(); // Save immediately
 
-        // Update the database
         const { data: updatedOption, error: updateError } = await supabase
             .from("option")
             .update({ votes: originalVoteCount + 1 }) // Use original + 1 for safety
@@ -244,7 +208,6 @@ async function voteForOption(option: Option, electionId: number) {
 
         if (updateError) throw updateError; // Let catch block handle rollback
 
-        // Optional: Verify DB update matches expectation
         if (updatedOption && typeof updatedOption.votes === 'number' && updatedOption.votes !== option.votes) {
             console.warn(`DB vote count (${updatedOption.votes}) differs from optimistic count (${option.votes}). Updating UI.`);
             option.votes = updatedOption.votes; // Correct UI with actual DB value
@@ -258,7 +221,6 @@ async function voteForOption(option: Option, electionId: number) {
         console.error("Error casting vote:", error);
         errorMsg.value = `Ovoz berishda xatolik: ${error.message}`;
 
-        // Rollback optimistic UI update on error
         option.votes = originalVoteCount;
         votesForCurrentSession.delete(electionId); // Remove vote from session map
         saveVotesToLocalStorage(); // Save rolled-back state
@@ -270,7 +232,6 @@ async function voteForOption(option: Option, electionId: number) {
     }
 }
 
-// --- Helper Functions ---
 function selectElectionToView(election: Election) {
   selectedElection.value = election;
 }
@@ -290,9 +251,7 @@ function formatDate(dateString: string | null | undefined): string {
   }
 }
 
-// Checks if the *current session* (based on random ID) has voted in the specified election
 function userHasVotedInElection(electionId: number): boolean {
-    // Check the map for the current session's random ID
     return userVotes.value.get(userId.value)?.has(electionId) ?? false;
 }
 
@@ -307,7 +266,6 @@ function userHasVotedInElection(electionId: number): boolean {
         Saylovlar Ro'yxati
       </h1>
 
-      <!-- Global Loading / Error Messages -->
        <div v-if="isLoading && !elections.length" class="text-center text-gray-500 py-10">
           <svg class="animate-spin h-8 w-8 text-blue-600 mx-auto mb-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -321,7 +279,6 @@ function userHasVotedInElection(electionId: number): boolean {
        </div>
 
 
-      <!-- Election List -->
       <div v-if="!isLoading || elections.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <div
           v-for="election in elections"
@@ -336,7 +293,6 @@ function userHasVotedInElection(electionId: number): boolean {
         >
           <div class="flex-1 min-w-0 mr-3">
             <span class="text-md sm:text-lg font-semibold text-gray-800 block truncate">{{ election.name }}</span>
-             <!-- Status Indicator -->
               <span v-if="!election.status" class="text-xs text-red-500 font-medium block mt-1">(Nofaol)</span>
               <span v-else-if="new Date(election.start_data) > currentTime" class="text-xs text-orange-500 font-medium block mt-1">(Boshlanmagan)</span>
               <span v-else-if="new Date(election.end_data) < currentTime" class="text-xs text-gray-500 font-medium block mt-1">(Tugagan)</span>
@@ -349,7 +305,6 @@ function userHasVotedInElection(electionId: number): boolean {
         </div>
       </div>
 
-      <!-- Selected Election Details & Voting -->
        <div v-if="selectedElection" class="mt-10 p-4 sm:p-6 border rounded-lg shadow-md bg-white" :key="selectedElection.id">
         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-4">
           <h2 class="text-xl sm:text-2xl font-bold text-gray-800">
