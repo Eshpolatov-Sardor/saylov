@@ -1,6 +1,5 @@
 <script setup>
 import { ref } from "vue"
-import bcrypt from 'bcryptjs'
 import { supabase } from "../../Supabase"
 
 const name = ref("")
